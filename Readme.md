@@ -130,6 +130,24 @@ Offline/PWA mode
 
 🤖 AI Tools Used
 
-
 ChatGPT for scaffolding & troubleshooting
 GitHub Copilot for small refactors
+
+### 🤖 Chatbot & AI Integration
+
+We extended WeatherDeck with a built-in **AI Assistant** powered by the Google Gemini API:
+
+- 🗨️ **Interactive Chatbot**: Floating assistant dock that can be opened in **Min / Half / Full screen** modes.  
+- 🌓 **Adaptive UI**: Works in both light and dark themes with improved readability.  
+- 🏙️ **City Management via Chat**:
+  - Add a city by simply typing the city and state (country defaults to India).  
+  - Delete a city the same way.  
+  - No need to enter latitude/longitude manually.  
+- ❓ **General Q&A**: The chatbot answers *any* question (like Gemini/ChatGPT), including technical, non-technical, and coding queries.  
+- 💻 **Copy-Ready Code**: Responses that include code are rendered in **formatted blocks** with a **Copy** button, making them directly usable.  
+- 🧭 **Conversation Memory**: Maintains recent history for contextual replies.  
+- 🛠️ **Error Handling**: 
+  - Shows clear error messages if Gemini quota is exceeded or API fails.  
+  - Falls back gracefully instead of crashing.  
+
+This integration makes WeatherDeck more than a weather dashboard — it’s now a **multi-tasking productivity app** with real-time weather data + an AI assistant.

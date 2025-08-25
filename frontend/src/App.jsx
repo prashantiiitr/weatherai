@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from './components/Header'
 import AddCity from './components/AddCity'
 import CityCard from './components/CityCard'
+import ChatDock from './components/ChatDock'
 
 function uid(){
   const k = 'wd_uid'
@@ -41,7 +42,9 @@ export default function App(){
         {!loading && cities.length===0 && <div className="card">No cities yet. Search above to add your first.</div>}
         {cities.map(c => (
           <CityCard key={c._id} city={c} onRemoved={load} API={API} userId={userId} />
+
         ))}
+        <ChatDock API={API} />
       </div>
     </main>
   )
