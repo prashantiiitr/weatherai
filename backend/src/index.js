@@ -49,8 +49,6 @@ app.use((req, res, next) => {
 });
 // ======= END CORS =======
 
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
 
 
 app.use(express.json());
