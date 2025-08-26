@@ -18,48 +18,23 @@ const app = express();
 
 // --- Robust CORS with allowlist + preflight ---
 // ---- BULLETPROOF CORS (put this BEFORE any routes/middleware) ----
-app.set('trust proxy', 1);
+const corsCfg = (process.env.CORS_ORIGIN || '*').trim();
+const allowAll  = corsCfg === '*';
+const allowList = allowAll ? [] : corsCfg.split(',').map(s => s.trim()).filter(Boolean);
 
-const raw = (process.env.CORS_ORIGIN || '*').trim();
-// Example for prod: "https://weatherai-py6o.vercel.app,http://localhost:5173"
-const allowAll = raw === '*';
-const allowList = allowAll ? [] : raw.split(',').map(s => s.trim()).filter(Boolean);
+const corsOptions = {
+  origin: (origin, cb) => {
+    if (allowAll) return cb(null, true);
+    if (!origin)  return cb(null, true);                 // curl/health
+    return cb(null, allowList.includes(origin));         // true/false
+  },
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','x-user-id'],
+  optionsSuccessStatus: 204
+};
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
-  // Allow if wildcard OR origin is in the allowList OR request has no origin (curl/server-to-server)
-  const ok =
-    allowAll ||
-    !origin ||
-    allowList.includes(origin);
-
-  if (ok) {
-    // Reflect the requesting origin (or * if you want)
-    res.setHeader('Access-Control-Allow-Origin', allowAll ? '*' : origin);
-    res.setHeader('Vary', 'Origin'); // important for caches
-  }
-
-  // Methods + headers for preflight
-  res.setHeader(
-    'Access-Control-Allow-Methods',
-    'GET,POST,PUT,PATCH,DELETE,OPTIONS'
-  );
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, x-user-id'
-  );
-  // If you plan to use cookies, also set:
-  // res.setHeader('Access-Control-Allow-Credentials', 'true');
-
-  // Fast exit for preflight
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
-// ---- END CORS ----
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 
 app.use(express.json());
