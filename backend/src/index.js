@@ -15,23 +15,39 @@ import diag from './routes/diag.js';
 
 const app = express();
 
-
-// --- Robust CORS with allowlist + preflight ---
-// ---- BULLETPROOF CORS (put this BEFORE any routes/middleware) ----
+// ======= SIMPLE, BULLETPROOF CORS (no package) =======
 const corsCfg = (process.env.CORS_ORIGIN || '*').trim();
+// e.g. "https://weatherai-py6o.vercel.app,http://localhost:5173" or "*"
 const allowAll  = corsCfg === '*';
 const allowList = allowAll ? [] : corsCfg.split(',').map(s => s.trim()).filter(Boolean);
 
-const corsOptions = {
-  origin: (origin, cb) => {
-    if (allowAll) return cb(null, true);
-    if (!origin)  return cb(null, true);                 // curl/health
-    return cb(null, allowList.includes(origin));         // true/false
-  },
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization','x-user-id'],
-  optionsSuccessStatus: 204
-};
+app.use((req, res, next) => {
+  const origin = req.headers.origin; // may be undefined for curl/health
+
+  // allow if wildcard OR no Origin header (server-to-server/health) OR in allowlist
+  const isAllowed = allowAll || !origin || allowList.includes(origin);
+
+  // only set header if we know what to set
+  if (isAllowed) {
+    if (allowAll) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    } else if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin'); // avoid cache pollution
+    }
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-user-id');
+  // If you ever use cookies, also set:
+  // res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+  // Preflight short-circuit
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+
+  next();
+});
+// ======= END CORS =======
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
