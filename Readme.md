@@ -4,9 +4,7 @@ A full-stack weather dashboard that shows **current weather** and **5-day foreca
 Built with the **MERN stack + Tailwind CSS**, powered by **OpenWeather API**, and includes **server-side caching** to minimize API calls.
 
 ---
-
-## 🚀 Live Demo
- https://weatherforcast-zeta.vercel.app  
+ 
 
 
 ---
