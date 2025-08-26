@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback, memo } from 'react'
 
+/* ---------- utils ---------- */
 function uid(){
   const k='wd_uid'; let v=localStorage.getItem(k);
   if(!v){ v=crypto.randomUUID(); localStorage.setItem(k,v) }
@@ -12,8 +13,8 @@ function apiBase(API) {
   return base.endsWith('/') ? base.slice(0,-1) : base;
 }
 
-/* ---------- code-focused markdown ---------- */
-function renderMessage(text) {
+/* ---------- minimal markdown with code fences ---------- */
+function renderMessage(text='') {
   const blocks = [];
   const regex = /```(\w+)?\n([\s\S]*?)```/g;
   let lastIndex = 0; let m;
@@ -85,29 +86,32 @@ const MessageBubble = memo(function MessageBubble({ role, content }) {
 const MessagesList = memo(function MessagesList({ msgs }) {
   const listRef = useRef(null);
   useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [msgs.length]);
-  // IMPORTANT: h-full (not flex-1) because parent gives the height
   return (
     <div ref={listRef} className="h-full overflow-y-auto p-3 space-y-2">
       {msgs.map((m,i)=> <MessageBubble key={i} role={m.role} content={m.content} />)}
       {msgs.length===0 && (
         <div className="text-sm text-gray-600 dark:text-gray-300">
-          You can ask general questions or manage your cities. Try “What’s AI?” or “Add Ranchi”.
+          You can ask me anything — try “What’s AI?” or “Write a C++ loop”.
         </div>
       )}
     </div>
   );
 });
 
+/* input for the chat area */
 const InputBar = memo(function InputBar({ value, onChange, onSubmit, busy }) {
   const inputRef = useRef(null);
   const composingRef = useRef(false);
+
   useEffect(() => { inputRef.current?.focus(); }, []);
+
   const handleSubmit = useCallback((e)=>{
     e.preventDefault();
     if (composingRef.current) return;
     onSubmit();
     requestAnimationFrame(()=> inputRef.current?.focus());
   }, [onSubmit]);
+
   return (
     <form className="p-3 border-t border-gray-200 dark:border-gray-700" onSubmit={handleSubmit}>
       <div className="flex gap-2">
@@ -121,6 +125,7 @@ const InputBar = memo(function InputBar({ value, onChange, onSubmit, busy }) {
           autoComplete="off" inputMode="text" spellCheck={false}
           onCompositionStart={()=>{composingRef.current = true}}
           onCompositionEnd={()=>{composingRef.current = false}}
+          onKeyDown={(e)=>{ if(e.key==='Enter' && !e.shiftKey){ /* handled by form submit */ } }}
         />
         <button type="submit" className="btn" disabled={busy}>{busy ? 'Sending…' : 'Send'}</button>
       </div>
@@ -129,21 +134,20 @@ const InputBar = memo(function InputBar({ value, onChange, onSubmit, busy }) {
 });
 
 /* ---------- main ---------- */
-
 export default function ChatDock({ API }){
   const BASE = apiBase(API);
 
   const [size, setSize] = useState('half');   // 'min' | 'half' | 'full'
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState('menu');   // 'menu' | 'chat' | 'add' | 'delete'
-  const [input, setInput] = useState('');
   const [msgs, setMsgs] = useState(() => { try { return JSON.parse(localStorage.getItem('wd_chat') || '[]') } catch { return [] }});
-  const [city, setCity] = useState(''); const [stateName, setStateName] = useState('');
-  const [busy, setBusy] = useState(false); const [error, setError] = useState('');
-  const userId = useMemo(()=> uid(), []);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
+  const userId = useMemo(()=> uid(), []);
   useEffect(() => { localStorage.setItem('wd_chat', JSON.stringify(msgs.slice(-20))) }, [msgs.length]);
 
+  /* ---- AI send ---- */
   const sendToAI = useCallback(async (history) => {
     setBusy(true); setError('');
     try{
@@ -167,26 +171,11 @@ export default function ChatDock({ API }){
   }, [BASE, userId]);
 
   const submitFreeText = useCallback(async () => {
-    setMode('chat');
     const text = input.trim(); if(!text) return;
-    setInput(''); const next = [...msgs, { role:'user', content:text }];
+    setInput('');
+    const next = [...msgs, { role:'user', content:text }];
     setMsgs(next); await sendToAI(next);
   }, [input, msgs, sendToAI]);
-
-  async function submitAdd(){
-    if(!city.trim()) return;
-    const q = stateName ? `${city}, ${stateName}` : city;
-    const userText = `Add city: ${q} (default country India if not specified)`;
-    const next = [...msgs, { role:'user', content: userText }];
-    setMsgs(next); setMode('chat'); await sendToAI(next);
-  }
-  async function submitDelete(){
-    if(!city.trim()) return;
-    const q = stateName ? `${city}, ${stateName}` : city;
-    const userText = `Delete city: ${q} (default country India if not specified)`;
-    const next = [...msgs, { role:'user', content: userText }];
-    setMsgs(next); setMode('chat'); await sendToAI(next);
-  }
 
   function Header(){
     return (
@@ -195,94 +184,20 @@ export default function ChatDock({ API }){
         <div className="font-semibold text-gray-900 dark:text-gray-100">Assistant</div>
         <div className="flex gap-2">
           <div className="hidden sm:flex items-center gap-1">
-            <button
-              className={`text-xs px-2 py-1 rounded-md border ${size==='min' ? 'border-blue-500 text-blue-600' : 'border-gray-300 text-gray-700 hover:bg-gray-100'} dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800`}
-              onClick={()=>setSize('min')}>Min</button>
-            <button
-              className={`text-xs px-2 py-1 rounded-md border ${size==='half' ? 'border-blue-500 text-blue-600' : 'border-gray-300 text-gray-700 hover:bg-gray-100'} dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800`}
-              onClick={()=>setSize('half')}>Half</button>
-            <button
-              className={`text-xs px-2 py-1 rounded-md border ${size==='full' ? 'border-blue-500 text-blue-600' : 'border-gray-300 text-gray-700 hover:bg-gray-100'} dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800`}
-              onClick={()=>setSize('full')}>Full</button>
+            <button className={`text-xs px-2 py-1 rounded-md border ${size==='min' ? 'border-blue-500 text-blue-600':'border-gray-300 text-gray-700 hover:bg-gray-100'} dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800`} onClick={()=>setSize('min')}>Min</button>
+            <button className={`text-xs px-2 py-1 rounded-md border ${size==='half' ? 'border-blue-500 text-blue-600':'border-gray-300 text-gray-700 hover:bg-gray-100'} dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800`} onClick={()=>setSize('half')}>Half</button>
+            <button className={`text-xs px-2 py-1 rounded-md border ${size==='full' ? 'border-blue-500 text-blue-600':'border-gray-300 text-gray-700 hover:bg-gray-100'} dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800`} onClick={()=>setSize('full')}>Full</button>
           </div>
-          <button
-            className="text-xs px-2 py-1 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100
-                       dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
-            onClick={()=>{ localStorage.removeItem('wd_chat'); setMsgs([]); }}
-          >Reset</button>
-          {mode !== 'menu' && (
-            <button className="text-xs text-gray-700 hover:underline dark:text-gray-300" onClick={()=>setMode('menu')}>Menu</button>
-          )}
+          <button className="text-xs px-2 py-1 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800" onClick={()=>{ localStorage.removeItem('wd_chat'); setMsgs([]); }}>Reset</button>
           <button className="text-sm text-gray-700 hover:underline dark:text-gray-300" onClick={()=>setOpen(false)}>Close</button>
         </div>
       </div>
     );
   }
 
-  function Menu(){
-    return (
-      <div className={`p-4 space-y-3 ${mode==='menu' ? 'block' : 'hidden'}`}>
-        <div className="text-sm text-gray-800 dark:text-gray-200">What do you want to do?</div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="btn" onClick={()=>setMode('add')}>➕ Add City</button>
-          <button type="button" className="btn" onClick={()=>setMode('delete')}>🗑️ Delete City</button>
-          <button type="button" className="btn" onClick={()=>setMode('chat')}>💬 Ask other question</button>
-        </div>
-        <div className="text-xs text-gray-600 dark:text-gray-400">Tip: For add/delete, just enter City and State. Country defaults to India.</div>
-      </div>
-    );
-  }
-
-  function AddForm(){
-    const cityRef = useRef(null); const composingRef = useRef(false);
-    useEffect(() => { if (open && size!=='min' && mode==='add') cityRef.current?.focus(); }, [open, size, mode]);
-    return (
-      <div className={`p-4 space-y-3 ${mode==='add' && size!=='min' ? 'block' : 'hidden'}`}>
-        <div className="text-sm text-gray-800 dark:text-gray-200">Add a city</div>
-        <div className="flex gap-2">
-          <input ref={cityRef} className="flex-1 rounded-xl border px-3 py-2 bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100"
-            placeholder="City (e.g., Ranchi)" value={city} onChange={e=>setCity(e.target.value)}
-            autoComplete="off" inputMode="text" spellCheck={false}
-            onCompositionStart={()=>{composingRef.current = true}} onCompositionEnd={()=>{composingRef.current = false}} />
-          <input className="flex-1 rounded-xl border px-3 py-2 bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100"
-            placeholder="State (optional)" value={stateName} onChange={e=>setStateName(e.target.value)}
-            autoComplete="off" inputMode="text" spellCheck={false} />
-        </div>
-        <div className="flex gap-2">
-          <button type="button" className="btn" onClick={async ()=>{ if(!composingRef.current) await submitAdd() }}>Add</button>
-          <button type="button" className="btn" onClick={()=>setMode('menu')}>Back</button>
-        </div>
-      </div>
-    );
-  }
-
-  function DeleteForm(){
-    const cityRef = useRef(null); const composingRef = useRef(false);
-    useEffect(() => { if (open && size!=='min' && mode==='delete') cityRef.current?.focus(); }, [open, size, mode]);
-    return (
-      <div className={`p-4 space-y-3 ${mode==='delete' && size!=='min' ? 'block' : 'hidden'}`}>
-        <div className="text-sm text-gray-800 dark:text-gray-200">Delete a city</div>
-        <div className="flex gap-2">
-          <input ref={cityRef} className="flex-1 rounded-xl border px-3 py-2 bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100"
-            placeholder="City (e.g., Ranchi)" value={city} onChange={e=>setCity(e.target.value)}
-            autoComplete="off" inputMode="text" spellCheck={false}
-            onCompositionStart={()=>{composingRef.current = true}} onCompositionEnd={()=>{composingRef.current = false}} />
-          <input className="flex-1 rounded-xl border px-3 py-2 bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100"
-            placeholder="State (optional)" value={stateName} onChange={e=>setStateName(e.target.value)}
-            autoComplete="off" inputMode="text" spellCheck={false} />
-        </div>
-        <div className="flex gap-2">
-          <button type="button" className="btn" onClick={async ()=>{ if(!composingRef.current) await submitDelete() }}>Delete</button>
-          <button type="button" className="btn" onClick={()=>setMode('menu')}>Back</button>
-        </div>
-      </div>
-    );
-  }
-
   function ChatArea(){
-    // NOTE: wrapper uses flex-1 min-h-0 so inner list can scroll; input stays pinned
     return (
-      <div className={`${mode==='chat' && size!=='min' ? 'flex' : 'hidden'} flex-col h-full min-h-0`}>
+      <div className="flex flex-col h-full min-h-0">
         {!!error && <div className="px-4 py-2 text-xs text-red-700 bg-red-50 border-t border-red-200">{error}</div>}
         <div className="flex-1 min-h-0">
           <MessagesList msgs={msgs} />
@@ -292,23 +207,7 @@ export default function ChatDock({ API }){
     );
   }
 
-  /* ---- Panels with overflow-hidden and min-h-0 content ---- */
-
   function Panel(){
-    if (size === 'half') {
-      return (
-        <div className="w-[min(92vw,760px)] h-[80vh] sm:h-[78vh] flex flex-col rounded-2xl shadow-2xl
-                        border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
-          <Header />
-          <div className="flex-1 min-h-0">
-            <Menu />
-            <AddForm />
-            <DeleteForm />
-            <ChatArea />
-          </div>
-        </div>
-      );
-    }
     if (size === 'full') {
       return (
         <div className="fixed inset-0 z-[60]">
@@ -317,14 +216,18 @@ export default function ChatDock({ API }){
             <div className="w-[min(100vw,1100px)] h-[min(100vh,92vh)] flex flex-col rounded-2xl shadow-2xl
                             border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
               <Header />
-              <div className="flex-1 min-h-0">
-                <Menu />
-                <AddForm />
-                <DeleteForm />
-                <ChatArea />
-              </div>
+              <ChatArea />
             </div>
           </div>
+        </div>
+      );
+    }
+    if (size === 'half') {
+      return (
+        <div className="w-[min(92vw,760px)] h-[80vh] sm:h-[78vh] flex flex-col rounded-2xl shadow-2xl
+                        border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
+          <Header />
+          <ChatArea />
         </div>
       );
     }
@@ -334,8 +237,8 @@ export default function ChatDock({ API }){
                       bg-white dark:bg-gray-900 px-3 py-2 flex items-center justify-between">
         <div className="text-xs font-medium text-gray-900 dark:text-gray-100">Assistant (min)</div>
         <div className="flex items-center gap-2">
-          <button className="text-xs underline text-gray-700 dark:text-gray-300" onClick={()=>{ setSize('half'); setMode('menu'); }}>Half</button>
-          <button className="text-xs underline text-gray-700 dark:text-gray-300" onClick={()=>{ setSize('full'); setMode('chat'); }}>Full</button>
+          <button className="text-xs underline text-gray-700 dark:text-gray-300" onClick={()=>{ setSize('half'); }}>Half</button>
+          <button className="text-xs underline text-gray-700 dark:text-gray-300" onClick={()=>{ setSize('full'); }}>Full</button>
           <button className="text-xs underline text-gray-700 dark:text-gray-300" onClick={()=>setOpen(false)}>Close</button>
         </div>
       </div>
