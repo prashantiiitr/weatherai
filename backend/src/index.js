@@ -15,7 +15,7 @@ import diag from './routes/diag.js';
 
 const app = express();
 
-// ======= SIMPLE, BULLETPROOF CORS (no package) =======
+/// ======= SIMPLE, BULLETPROOF CORS (no package) =======
 const corsCfg = (process.env.CORS_ORIGIN || '*').trim();
 // e.g. "https://weatherai-py6o.vercel.app,http://localhost:5173" or "*"
 const allowAll  = corsCfg === '*';
