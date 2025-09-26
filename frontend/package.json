@@ -9,7 +9,6 @@
     "lint": "eslint .",
     "preview": "vite preview"
   },
-  "engines": { "node": ">=18" },
   "dependencies": {
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

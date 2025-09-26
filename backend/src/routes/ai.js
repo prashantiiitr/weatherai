@@ -10,11 +10,10 @@ import {
 
 const r = Router();
 
-// Primary + fallback model
-const PRIMARY_MODEL = 'gemini-1.5-flash';
-const FALLBACK_MODEL = 'gemini-1.5-flash-8b'; // cheaper/friendlier to quotas
+// Models configurable via env; change these in Render if needed
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite';
 
-// Use a proper systemInstruction (not a user message)
 const SYSTEM =
   'You are WeatherDeck Assistant. You can answer ANY general question (science, math, history, writing, ' +
   'and coding in ANY language including C++, Java, JavaScript, Python, Go, Rust, etc.). ' +
@@ -33,25 +32,22 @@ function getModel(key, modelId) {
   });
 }
 
-// ------------- Tiny intent parser to avoid LLM calls for weather ops -------------
+// ---------- small intent parser (unchanged) ----------
 function detectIntent(userText) {
   const t = (userText || '').toLowerCase().trim();
 
-  // Add city: e.g., "add city: ranchi, jharkhand"
   if (/^\s*(add\s+city|add)\s*[:\-]?\s*/i.test(userText)) {
     const after = userText.replace(/^\s*(add\s+city|add)\s*[:\-]?\s*/i, '').trim();
     const [namePart, statePart] = after.split(',').map(s => s?.trim()).filter(Boolean);
     if (namePart) return { type: 'add', name: namePart, state: statePart || null, country: 'IN' };
   }
 
-  // Delete city: e.g., "delete city: pune, maharashtra"
   if (/^\s*(delete\s+city|delete|remove)\s*[:\-]?\s*/i.test(userText)) {
     const after = userText.replace(/^\s*(delete\s+city|delete|remove)\s*[:\-]?\s*/i, '').trim();
     const [namePart, statePart] = after.split(',').map(s => s?.trim()).filter(Boolean);
     if (namePart) return { type: 'delete', name: namePart, state: statePart || null, country: 'IN' };
   }
 
-  // Get weather: e.g., "weather for <city>" or "show weather for ..."
   const wxMatch = t.match(/\b(weather\s+for|show\s+weather\s+for|forecast\s+for)\s+(.+)/i);
   if (wxMatch) {
     const name = wxMatch[2]?.split(',')[0]?.trim();
@@ -61,7 +57,7 @@ function detectIntent(userText) {
   return { type: 'none' };
 }
 
-// ------------- Tool declarations for Gemini tool calling -------------
+// ---------- function declarations metadata ----------
 const functionDeclarations = [
   {
     name: 'searchCities',
@@ -104,7 +100,7 @@ const functionDeclarations = [
   },
 ];
 
-// ------------- Main route -------------
+// ---------- main endpoint ----------
 r.post('/chat', async (req, res) => {
   const API_KEY = (process.env.GEMINI_API_KEY || '').trim();
   if (!API_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY missing' });
@@ -114,10 +110,9 @@ r.post('/chat', async (req, res) => {
     const userId = req.header('x-user-id') || req.body?.userId || 'demo-user';
     const lastUserText = messages?.length ? messages[messages.length - 1]?.content || '' : '';
 
-    // 1) Try to handle common weather intents locally (no LLM usage)
+    // 1) Local intent handling (fast paths)
     const intent = detectIntent(lastUserText);
     if (intent.type === 'add') {
-      // geocode & add
       let args = { name: intent.name, state: intent.state, country: intent.country };
       try {
         const q = [args.name, args.state, args.country].filter(Boolean).join(', ');
@@ -129,7 +124,9 @@ r.post('/chat', async (req, res) => {
           args.country = args.country || best.country || 'IN';
           args.state = args.state || best.state || null;
         }
-      } catch {}
+      } catch (e) {
+        // ignore geocode failures — proceed with what we have
+      }
       const saved = await tool_addCity(userId, args);
       return res.json({
         reply: `Added **${saved.name}**${saved.state ? ', ' + saved.state : ''} (${saved.country}).`,
@@ -160,7 +157,6 @@ r.post('/chat', async (req, res) => {
     }
 
     if (intent.type === 'weather_query_name') {
-      // simple name search → let user pick from matches or add
       const results = await tool_searchCities(intent.name);
       if (results.length === 0) {
         return res.json({ reply: `I couldn't find “${intent.name}”. Try with state name too.`, toolsUsed: ['searchCities'] });
@@ -173,25 +169,60 @@ r.post('/chat', async (req, res) => {
       });
     }
 
-    // 2) Otherwise, go to LLM (with tools)
-    const convo = messages.slice(-10).map((m) => ({ role: m.role, parts: [{ text: m.content }] }));
+    // 2) Map internal roles to API-required roles ('user' | 'model')
+    function mapRoleForApi(role) {
+      if (!role) return 'user';
+      const r = String(role).toLowerCase();
+      if (r === 'user') return 'user';
+      return 'model'; // assistant, tool, system => model
+    }
 
-    // helper to run a model call, with tool-calling flow
+    const convo = messages.slice(-10).map((m) => ({
+      role: mapRoleForApi(m.role),
+      parts: [{ text: m.content || '' }],
+    }));
+
+    // helper: run model (with tool-call flow)
     async function runWithModel(modelId) {
-      const model = getModel(API_KEY, modelId);
-
-      const first = await model.generateContent({
-        contents: convo,
-        tools: [{ functionDeclarations }],
-      });
-
-      const modelTurn = first.response.candidates?.[0]?.content;
-      const callParts = modelTurn?.parts?.filter((p) => p.functionCall) || [];
-
-      if (callParts.length === 0) {
-        return { reply: first.response.text() || 'OK', toolsUsed: [], data: [] };
+      let model;
+      try {
+        model = getModel(API_KEY, modelId);
+      } catch (err) {
+        const e = new Error(`Model init failed for "${modelId}": ${err?.message || err}`);
+        e.status = 500;
+        throw e;
       }
 
+      // initial model call (model may request tools via functionCall parts)
+      let first;
+      try {
+        first = await model.generateContent({
+          contents: convo,
+          tools: [{ functionDeclarations }],
+        });
+      } catch (err) {
+        const status = err?.response?.status || err?.status || 500;
+        const detail = err?.response?.data || err?.message || String(err);
+        const e = new Error(`Model call failed (${modelId}): ${detail}`);
+        e.status = status;
+        throw e;
+      }
+
+      // pick candidate content
+      const candidate = first?.response?.candidates?.[0];
+      const modelTurn = candidate?.content || first?.response?.messages?.[0];
+      // ensure role is allowed
+      if (modelTurn && !modelTurn.role) modelTurn.role = 'model';
+
+      // check if model asked to call functions/tools
+      const callParts = (modelTurn?.parts || []).filter((p) => p.functionCall);
+      if (!callParts || callParts.length === 0) {
+        // no tool calls — return textual reply
+        const textReply = first.response?.text?.() || (candidate?.content?.parts?.map(p => p.text).join(' ') || 'OK');
+        return { reply: textReply, toolsUsed: [], data: [] };
+      }
+
+      // run each requested tool locally
       const toolOutputs = [];
       for (const p of callParts) {
         const { name, args = {} } = p.functionCall || {};
@@ -230,51 +261,73 @@ r.post('/chat', async (req, res) => {
         }
       }
 
-      const toolResponseParts = toolOutputs.map((t) => ({
-        functionResponse: {
-          name: t.name,
-          response: {
-            name: t.name,
-            content: [{ text: JSON.stringify(t.ok ? t.output : { error: t.error }) }],
-          },
+      // pass tool outputs back to model as a model-role turn (simple JSON text)
+      const toolParts = [
+        {
+          role: 'model',
+          parts: [{ text: JSON.stringify(toolOutputs) }],
         },
-      }));
+      ];
 
-      const follow = await model.generateContent({
-        contents: [
-          ...convo,
-          modelTurn, // MUST include functionCall turn
-          { role: 'tool', parts: toolResponseParts }, // same order/count
-        ],
-      });
+      // follow-up call: include model's function-call turn then the tool results
+      let follow;
+      try {
+        follow = await model.generateContent({
+          contents: [
+            ...convo,
+            modelTurn,
+            ...toolParts,
+          ],
+        });
+      } catch (err) {
+        const status = err?.response?.status || err?.status || 500;
+        const detail = err?.response?.data || err?.message || String(err);
+        const e = new Error(`Follow-up model call failed (${modelId}): ${detail}`);
+        e.status = status;
+        throw e;
+      }
+
+      const finalText = follow.response?.text?.() ||
+        (follow.response?.candidates?.[0]?.content?.parts?.map(p => p.text).join(' ') || 'OK');
 
       return {
-        reply: follow.response.text() || 'OK',
-        toolsUsed: toolOutputs.map((t) => t.name),
+        reply: finalText,
+        toolsUsed: toolOutputs.map(t => t.name),
         data: toolOutputs,
       };
-    }
+    } // end runWithModel
 
-    // Try primary; if 429, fall back; if still fails, friendly message
+    // 3) Try primary model, fallback on quota/429 or choose friendly errors for 403/404
     try {
       const out = await runWithModel(PRIMARY_MODEL);
       return res.json(out);
     } catch (e) {
-      const status = e?.response?.status;
-      const msg = e?.response?.data || e?.message || '';
+      const status = e?.status || (e?.response?.status) || 0;
+      const msg = e?.message || e?.response?.data || String(e);
+
+      // quota or rate limiting -> try fallback
       if (status === 429 || /Too Many Requests|quota/i.test(String(msg))) {
         try {
           const out2 = await runWithModel(FALLBACK_MODEL);
           return res.json(out2);
         } catch (e2) {
           return res.status(503).json({
-            error: 'AI free-tier quota reached. Weather tools still work: try “Add city: <City, State>” or ask again later.',
-            detail: e2?.message || 'quota',
+            error: 'AI free-tier quota reached and fallback failed. Weather tools still work.',
+            detail: e2?.message || String(e2),
           });
         }
       }
-      // Other errors:
-      return res.status(500).json({ error: e?.message || 'AI service failed' });
+
+      // model-not-found or permission -> instructive message
+      if (status === 404 || status === 403 || /not found|was not found|does not have access/i.test(String(msg))) {
+        return res.status(500).json({
+          error: 'AI model unavailable for this project. Please set GEMINI_MODEL to a model your Google Cloud project has access to (e.g., gemini-2.5-flash).',
+          detail: msg,
+        });
+      }
+
+      // other errors
+      return res.status(500).json({ error: 'AI service failed', detail: msg });
     }
   } catch (e) {
     console.error('AI chat error:', e?.response?.data || e?.message || e);
